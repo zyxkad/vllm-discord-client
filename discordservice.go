@@ -209,8 +209,15 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 	resBuf := make([]string, 0, 16)
 
 	refreshResBuf := func() error {
+		if len(resBuf) == 0 {
+			return nil
+		}
 		allRes := strings.Join(resBuf, "")
 		resBuf = resBuf[:0]
+
+		if len(allRes) == 0 {
+			return nil
+		}
 
 		var nextMsg string
 		replyingMsg.Content = replyingMsg.Content + allRes
