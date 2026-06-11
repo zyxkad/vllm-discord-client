@@ -16,7 +16,7 @@ type Client struct {
 	ctx       context.Context
 	ctxCancel context.CancelCauseFunc
 
-	messageEventChMap     map[string]chan MessageEvent
+	messageEventChMap     map[string]chan *discordgo.Message
 	messageEventChMapLock sync.RWMutex
 }
 
@@ -27,7 +27,7 @@ func NewClient(ctx context.Context, discCli *discordgo.Session, aiCli openai.Cli
 		aiCli:             aiCli,
 		ctx:               ctx1,
 		ctxCancel:         cancel,
-		messageEventChMap: make(map[string]chan MessageEvent, 3),
+		messageEventChMap: make(map[string]chan *discordgo.Message, 3),
 	}
 }
 

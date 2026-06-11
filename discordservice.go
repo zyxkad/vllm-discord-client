@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 
@@ -12,14 +15,12 @@ import (
 	"github.com/openai/openai-go/v3"
 )
 
-const discMsgMaxLength = 1950
+const (
+	discMsgMaxLength = 1950
+	maxTextFileSize = 200 * 1024
+)
 
 var discNoMention = &discordgo.MessageAllowedMentions{}
-
-type MessageEvent struct {
-	TriggerMessage *discordgo.Message
-	Messages       []openai.ChatCompletionMessageParamUnion
-}
 
 func (c *Client) OnUserMsg(message *discordgo.Message) {
 	channelID := message.ChannelID
@@ -30,7 +31,7 @@ func (c *Client) OnUserMsg(message *discordgo.Message) {
 		c.messageEventChMapLock.Lock()
 		messageEventCh = c.messageEventChMap[channelID]
 		if messageEventCh == nil {
-			messageEventCh = make(chan MessageEvent, 0)
+			messageEventCh = make(chan *discordgo.Message, 0)
 			go func() {
 				defer func() {
 					c.messageEventChMapLock.Lock()
@@ -46,26 +47,8 @@ func (c *Client) OnUserMsg(message *discordgo.Message) {
 		c.messageEventChMapLock.Unlock()
 	}
 
-	userid := message.Author.Username
-
 	select {
-	case messageEventCh <- MessageEvent{
-		TriggerMessage: message,
-		Messages: []openai.ChatCompletionMessageParamUnion{{
-			OfUser: &openai.ChatCompletionUserMessageParam{
-				Name: openai.String(userid),
-				Content: openai.ChatCompletionUserMessageParamContentUnion{
-					OfString: openai.String(fmt.Sprintf(
-						"[name=%q;userid=%q;date=%s]: %s",
-						message.Author.DisplayName(),
-						userid,
-						message.Timestamp.UTC().Format(time.DateTime),
-						message.ContentWithMentionsReplaced()),
-					),
-				},
-			},
-		}},
-	}:
+	case messageEventCh <- message:
 	case <-c.ctx.Done():
 		return
 	}
@@ -90,21 +73,74 @@ func (c *Client) resetMemory(channelID string, messageHistory []openai.ChatCompl
 	return messageHistory
 }
 
-func (c *Client) runDiscChannelService(channelID string, messageEventCh <-chan MessageEvent) error {
+func (c *Client) runDiscChannelService(channelID string, messageEventCh <-chan *discordgo.Message) error {
 	messageHistory := make([]openai.ChatCompletionMessageParamUnion, 0, 4)
 	messageHistory = c.resetMemory(channelID, messageHistory)
 
 	for {
 		select {
-		case event := <-messageEventCh:
-			triggerMessage := event.TriggerMessage
-			if triggerMessage.Content == "reset memory" {
+		case message := <-messageEventCh:
+			if message.Content == "reset memory" {
 				messageHistory = c.resetMemory(channelID, messageHistory)
-				c.discSendReply(c.ctx, triggerMessage, "***System**: Memory resetted!*")
+				c.discSendReply(c.ctx, message, "***System**: Memory resetted!*")
 				break
 			}
 
-			messageHistory = append(messageHistory, event.Messages...)
+			userid := message.Author.Username
+			msgParts := make([]openai.ChatCompletionContentPartUnionParam, 0, 2)
+
+			msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
+				OfText: &openai.ChatCompletionContentPartTextParam{
+					Text: fmt.Sprintf(
+						"[name=%q;userid=%q;date=%s]: %s",
+						message.Author.DisplayName(),
+						userid,
+						message.Timestamp.UTC().Format(time.DateTime),
+						message.ContentWithMentionsReplaced(),
+					),
+				},
+			})
+
+			var buf bytes.Buffer
+			for _, attachment := range message.Attachments {
+				if strings.HasPrefix(attachment.ContentType, "image/") {
+					msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
+						OfImageURL: &openai.ChatCompletionContentPartImageParam{
+							ImageURL: openai.ChatCompletionContentPartImageImageURLParam{
+								URL: attachment.URL,
+							},
+						},
+					})
+					continue
+				}
+				if strings.HasPrefix(attachment.ContentType, "audio/") {
+					continue
+				}
+
+				resp, err := http.DefaultClient.Get(attachment.URL)
+				if err != nil {
+					log.Println("cannot fetch discord attachment:", attachment.URL, ":", err)
+					continue
+				}
+				n, err := io.Copy(&buf, io.LimitReader(resp.Body, maxTextFileSize + 1))
+				resp.Body.Close()
+				if err != nil || n > maxTextFileSize {
+					continue
+				}
+
+				msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
+					OfText: &openai.ChatCompletionContentPartTextParam{
+						Text: fmt.Sprintf("Filename %q:\n````````\n%s\n````````", attachment.Filename, buf.String()),
+					},
+				})
+			}
+
+			messageHistory = append(messageHistory, openai.ChatCompletionMessageParamUnion{
+				OfUser: &openai.ChatCompletionUserMessageParam{
+					Name:    openai.String(userid),
+					Content: openai.ChatCompletionUserMessageParamContentUnion{OfArrayOfContentParts: msgParts},
+				},
+			})
 
 			ctx, cancel := context.WithCancelCause(c.ctx)
 			streamOutput := make(chan string, 64)
@@ -128,7 +164,7 @@ func (c *Client) runDiscChannelService(channelID string, messageEventCh <-chan M
 				close(streamOutput)
 			}()
 
-			cancel(c.discLiveReply(ctx, triggerMessage, streamOutput))
+			cancel(c.discLiveReply(ctx, message, streamOutput))
 
 			if err := c.ctx.Err(); err != nil {
 				return err
