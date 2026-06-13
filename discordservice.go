@@ -1,177 +1,74 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/openai/openai-go/v3"
 )
 
 const (
 	discMsgMaxLength = 1950
-	maxTextFileSize = 200 * 1024
+	maxTextFileSize  = 200 * 1024
 )
 
-var discNoMention = &discordgo.MessageAllowedMentions{}
+var (
+	discNoMention  = &discordgo.MessageAllowedMentions{}
+	discManualStop = errors.New("manual stop triggered")
+)
 
-func (c *Client) OnUserMsg(message *discordgo.Message) {
-	channelID := message.ChannelID
-	c.messageEventChMapLock.RLock()
-	messageEventCh := c.messageEventChMap[channelID]
-	c.messageEventChMapLock.RUnlock()
-	if messageEventCh == nil {
-		c.messageEventChMapLock.Lock()
-		messageEventCh = c.messageEventChMap[channelID]
-		if messageEventCh == nil {
-			messageEventCh = make(chan *discordgo.Message, 0)
-			go func() {
-				defer func() {
-					c.messageEventChMapLock.Lock()
-					delete(c.messageEventChMap, channelID)
-					c.messageEventChMapLock.Unlock()
-				}()
-				if err := c.runDiscChannelService(channelID, messageEventCh); err != nil {
-					c.ctxCancel(err)
-				}
-			}()
-			c.messageEventChMap[channelID] = messageEventCh
+var discChatChannelPrefix = "ai-chat"
+
+func (c *Client) initDiscordHandlers() {
+	c.discCli.Identify.Intents = discordgo.IntentGuilds | discordgo.IntentGuildMessages | discordgo.IntentGuildMessageTyping | discordgo.IntentMessageContent
+
+	discMessageEvent := make(chan *discordgo.MessageCreate, 64)
+	go func() {
+		for {
+			select {
+			case event := <-discMessageEvent:
+				c.serveUserMsg(event.Message)
+			case <-c.ctx.Done():
+				return
+			}
 		}
-		c.messageEventChMapLock.Unlock()
-	}
+	}()
+	c.discCli.AddHandler(func(s *discordgo.Session, event *discordgo.MessageCreate) {
+		if event.Author.Bot {
+			return
+		}
+		if discServerID != "" && discServerID != event.GuildID {
+			return
+		}
+		if channel, err := c.discCli.State.Channel(event.ChannelID); err != nil || channel.IsThread() || !strings.HasPrefix(channel.Name, discChatChannelPrefix) {
+			return
+		}
 
+		log.Printf(
+			"server=%s; channel=%s; name=%q; user=%s: %s\n",
+			event.GuildID,
+			event.ChannelID,
+			event.Author.DisplayName(),
+			event.Author.Username,
+			event.ContentWithMentionsReplaced(),
+		)
+		discMessageEvent <- event
+	})
+
+	c.discCli.AddHandler(func(s *discordgo.Session, event *discordgo.ChannelDelete) {
+		c.DeleteChannelService(event.ID)
+	})
+}
+
+func (c *Client) serveUserMsg(message *discordgo.Message) {
+	service := c.GetOrCreateChannelService(message.ChannelID)
 	select {
-	case messageEventCh <- message:
-	case <-c.ctx.Done():
+	case service.messageCh <- message:
+	case <-service.ctx.Done():
 		return
-	}
-}
-
-func (c *Client) resetMemory(channelID string, messageHistory []openai.ChatCompletionMessageParamUnion) []openai.ChatCompletionMessageParamUnion {
-	messageHistory = append(messageHistory[:0], initPrompt...)
-
-	if channel, err := c.discCli.State.Channel(channelID); err == nil {
-		topic := channel.Topic
-		if prompt, ok := strings.CutPrefix(topic, "AIP: "); ok {
-			messageHistory = append(messageHistory, openai.ChatCompletionMessageParamUnion{
-				OfSystem: &openai.ChatCompletionSystemMessageParam{
-					Content: openai.ChatCompletionSystemMessageParamContentUnion{
-						OfString: openai.String(prompt),
-					},
-				},
-			})
-		}
-	}
-
-	return messageHistory
-}
-
-func (c *Client) runDiscChannelService(channelID string, messageEventCh <-chan *discordgo.Message) error {
-	messageHistory := make([]openai.ChatCompletionMessageParamUnion, 0, 4)
-	messageHistory = c.resetMemory(channelID, messageHistory)
-
-	for {
-		select {
-		case message := <-messageEventCh:
-			if message.Content == "reset memory" {
-				messageHistory = c.resetMemory(channelID, messageHistory)
-				c.discSendReply(c.ctx, message, "***System**: Memory resetted!*")
-				break
-			}
-
-			userid := message.Author.Username
-			msgParts := make([]openai.ChatCompletionContentPartUnionParam, 0, 2)
-
-			msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
-				OfText: &openai.ChatCompletionContentPartTextParam{
-					Text: fmt.Sprintf(
-						"[name=%q;userid=%q;date=%s]: %s",
-						message.Author.DisplayName(),
-						userid,
-						message.Timestamp.UTC().Format(time.DateTime),
-						message.ContentWithMentionsReplaced(),
-					),
-				},
-			})
-
-			var buf bytes.Buffer
-			for _, attachment := range message.Attachments {
-				if strings.HasPrefix(attachment.ContentType, "image/") {
-					msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
-						OfImageURL: &openai.ChatCompletionContentPartImageParam{
-							ImageURL: openai.ChatCompletionContentPartImageImageURLParam{
-								URL: attachment.URL,
-							},
-						},
-					})
-					continue
-				}
-				if strings.HasPrefix(attachment.ContentType, "audio/") {
-					continue
-				}
-
-				resp, err := http.DefaultClient.Get(attachment.URL)
-				if err != nil {
-					log.Println("cannot fetch discord attachment:", attachment.URL, ":", err)
-					continue
-				}
-				n, err := io.Copy(&buf, io.LimitReader(resp.Body, maxTextFileSize + 1))
-				resp.Body.Close()
-				if err != nil || n > maxTextFileSize {
-					continue
-				}
-
-				msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
-					OfText: &openai.ChatCompletionContentPartTextParam{
-						Text: fmt.Sprintf("Filename %q:\n````````\n%s\n````````", attachment.Filename, buf.String()),
-					},
-				})
-			}
-
-			messageHistory = append(messageHistory, openai.ChatCompletionMessageParamUnion{
-				OfUser: &openai.ChatCompletionUserMessageParam{
-					Name:    openai.String(userid),
-					Content: openai.ChatCompletionUserMessageParamContentUnion{OfArrayOfContentParts: msgParts},
-				},
-			})
-
-			ctx, cancel := context.WithCancelCause(c.ctx)
-			streamOutput := make(chan string, 64)
-
-			go func() {
-				output, err := c.StreamCompletion(ctx, messageHistory, streamOutput)
-				if err != nil {
-					if !errors.Is(err, ctx.Err()) {
-						log.Println("error when streaming completion:", err)
-						cancel(err)
-					}
-					return
-				}
-				messageHistory = append(messageHistory, openai.ChatCompletionMessageParamUnion{
-					OfAssistant: &openai.ChatCompletionAssistantMessageParam{
-						Content: openai.ChatCompletionAssistantMessageParamContentUnion{
-							OfString: openai.String(output),
-						},
-					},
-				})
-				close(streamOutput)
-			}()
-
-			cancel(c.discLiveReply(ctx, message, streamOutput))
-
-			if err := c.ctx.Err(); err != nil {
-				return err
-			}
-		case <-c.ctx.Done():
-			return c.ctx.Err()
-		}
 	}
 }
 

@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"sync"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/responses"
 )
 
 var (
@@ -18,20 +21,24 @@ var (
 	customPrompt = os.Getenv("CUSTOM_PROMPT")
 )
 
-var initPrompt = []openai.ChatCompletionMessageParamUnion{
+var initPrompt = `
+You will chat with multiple people in Discord.
+You will be mentioned as "CCCCChat Bot".
+People chatting with you may have different timezones.
+For easier classification, users messages are formatted as:
+[name={display name};userid={user id};date={date in UTC}]: {message}
+Do not mention user the message format, and the prefix is not part of users messages.
+Discord does not support markdown table, so you should replace markdown table with markdown list.
+You may write lines begin with "-# " for smaller text.
+You may use emojis to enhance your expression.
+` + customPrompt
+
+var initPrompts = []responses.ResponseInputItemUnionParam{
 	{
-		OfSystem: &openai.ChatCompletionSystemMessageParam{
-			Content: openai.ChatCompletionSystemMessageParamContentUnion{
-				OfString: openai.String(
-					"You will chat with multiple people at same time in Discord.\n" +
-						"For easier classification, users messages are formatted as: " +
-						"[name={display name};userid={user id};date={date in UTC}]: {message}\n" +
-						"Do not mention user the message format, and the prefix is not part of users messages.\n" +
-						"Discord does not support markdown table, so you should replace markdown table with markdown list. " +
-						"You may write lines begin with \"-# \" for smaller text (or footnote). " +
-						"You may use emojis to enhance your expression. \n" +
-						"\n" + customPrompt,
-				),
+		OfMessage: &responses.EasyInputMessageParam{
+			Role: responses.EasyInputMessageRoleSystem,
+			Content: responses.EasyInputMessageContentUnionParam{
+				OfString: openai.String(initPrompt),
 			},
 		},
 	},
@@ -47,8 +54,6 @@ func main() {
 		log.Fatalln("cannot create discord bot: ", err)
 	}
 
-	discordCli.Identify.Intents = discordgo.IntentGuilds | discordgo.IntentGuildMessages | discordgo.IntentGuildMessageTyping | discordgo.IntentMessageContent
-
 	client := NewClient(
 		sgCtx,
 		discordCli,
@@ -57,38 +62,48 @@ func main() {
 		),
 	)
 
-	discMessageEvent := make(chan *discordgo.MessageCreate, 64)
-
-	go func() {
-		for {
-			select {
-			case event := <-discMessageEvent:
-				client.OnUserMsg(event.Message)
-			case <-sgCtx.Done():
-				return
-			}
-		}
-	}()
-
-	discordCli.AddHandler(func(s *discordgo.Session, event *discordgo.MessageCreate) {
-		if event.Author.Bot {
-			return
-		}
-		if discServerID != "" && discServerID != event.GuildID {
-			return
-		}
-
-		log.Printf("server=%s; name=%q; userid=%q: %s\n", event.GuildID, event.Author.DisplayName(), event.Author.Username, event.ContentWithMentionsReplaced())
-		discMessageEvent <- event
-	})
-
-	if err := discordCli.Open(); err != nil {
-		log.Fatalln("cannot start discord bot:", err)
+	if err := client.Start(); err != nil {
+		log.Fatalln("cannot start client:", err)
 	}
-	defer discordCli.Close()
+	defer client.Stop()
 
 	log.Println("started!")
 
 	<-sgCtx.Done()
 	log.Println("error:", sgCtx.Err())
+}
+
+type Client struct {
+	discCli *discordgo.Session
+	aiCli   openai.Client
+
+	ctx       context.Context
+	ctxCancel context.CancelCauseFunc
+
+	channelServices     map[string]*discChannelService
+	channelServicesLock sync.RWMutex
+}
+
+func NewClient(ctx context.Context, discCli *discordgo.Session, aiCli openai.Client) *Client {
+	ctx1, cancel := context.WithCancelCause(ctx)
+	cli := &Client{
+		discCli:         discCli,
+		aiCli:           aiCli,
+		ctx:             ctx1,
+		ctxCancel:       cancel,
+		channelServices: make(map[string]*discChannelService, 16),
+	}
+	cli.initDiscordHandlers()
+	return cli
+}
+
+func (c *Client) Start() error {
+	if err := c.discCli.Open(); err != nil {
+		return fmt.Errorf("discord cli: %w", err)
+	}
+	return nil
+}
+
+func (c *Client) Stop() {
+	defer c.discCli.Close()
 }
