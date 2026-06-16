@@ -84,6 +84,7 @@ func (c *Client) discSendReply(ctx context.Context, replying *discordgo.Message,
 				ChannelID: replying.ChannelID,
 				GuildID:   replying.GuildID,
 			},
+			Flags: discordgo.MessageFlagsSuppressEmbeds,
 		},
 		discordgo.WithContext(ctx),
 	)
@@ -93,14 +94,16 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 	channelID := triggerMessage.ChannelID
 	replyingMsg, err := c.discSendReply(ctx, triggerMessage, "*thinking...*")
 	if err != nil {
-		log.Println("error when creating reply message: ", err)
+		if ctx.Err() == nil {
+			log.Println("error when creating reply message: ", err)
+		}
 		return err
 	}
 	replyingMsg.Content = ""
 
 	c.discCli.ChannelTyping(channelID, discordgo.WithContext(ctx))
 
-	timeout := 400 * time.Millisecond
+	timeout := 500 * time.Millisecond
 	timeouter := time.NewTimer(timeout)
 
 	resBuf := make([]string, 0, 16)
@@ -116,37 +119,50 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 			return nil
 		}
 
-		var nextMsg string
+		var (
+			nextMsg string
+			err     error
+		)
+
 		replyingMsg.Content = replyingMsg.Content + allRes
 		if len(replyingMsg.Content) > discMsgMaxLength {
 			replyingMsg.Content, nextMsg = fixSplitedCodeBlock(splitMessage(replyingMsg.Content))
 		}
 
 		fixedMessage := fixMessage(replyingMsg.Content)
-		if _, err := c.discCli.ChannelMessageEditComplex(
+		if _, err = c.discCli.ChannelMessageEditComplex(
 			&discordgo.MessageEdit{
-				Channel:         replyingMsg.ChannelID,
+				Channel:         channelID,
 				ID:              replyingMsg.ID,
 				Content:         &fixedMessage,
 				AllowedMentions: discNoMention,
 			},
 			discordgo.WithContext(ctx),
 		); err != nil {
-			log.Println("error: cannot edit replying message", replyingMsg.ID, ":", err)
+			if ctx.Err() == nil {
+				log.Println("error: cannot edit replying message", replyingMsg.ID, ":", err)
+			}
 			return err
 		}
 
-		if nextMsg != "" {
-			var err error
+		var newMsg string
+		for len(nextMsg) > 0 {
+			newMsg, nextMsg = nextMsg, ""
+			if len(newMsg) > discMsgMaxLength {
+				newMsg, nextMsg = fixSplitedCodeBlock(splitMessage(newMsg))
+			}
 			if replyingMsg, err = c.discCli.ChannelMessageSendComplex(
-				replyingMsg.ChannelID,
+				channelID,
 				&discordgo.MessageSend{
-					Content:         nextMsg,
+					Content:         newMsg,
 					AllowedMentions: discNoMention,
+					Flags: discordgo.MessageFlagsSuppressEmbeds,
 				},
 				discordgo.WithContext(ctx),
 			); err != nil {
-				log.Println("error: cannot send following reply message", replyingMsg.ID, ":", err)
+				if ctx.Err() == nil {
+					log.Println("error: cannot send following reply message in", channelID, ":", err)
+				}
 				return err
 			}
 		}
@@ -164,8 +180,8 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 		case <-timeouter.C:
 			timeouter.Reset(timeout)
 
+			c.discCli.ChannelTyping(channelID)
 			if len(resBuf) != 0 {
-				c.discCli.ChannelTyping(channelID)
 				if err := refreshResBuf(); err != nil {
 					return err
 				}

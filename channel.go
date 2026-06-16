@@ -16,7 +16,6 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
 )
 
 type discChannelService struct {
@@ -27,8 +26,8 @@ type discChannelService struct {
 
 	metaMux sync.RWMutex
 
-	thinking bool
-	prompt   string
+	options completionOptions
+	prompt  string
 
 	messageCh chan *discordgo.Message
 }
@@ -52,12 +51,17 @@ func (c *Client) loadChannel(service *discChannelService) bool {
 		return false
 	}
 
+	service.options = completionOptions{}
+	service.prompt = ""
+
 	s := bufio.NewScanner(strings.NewReader(channel.Topic))
 	for s.Scan() {
 		t := s.Text()
-		if think, ok := strings.CutPrefix(t, "think: "); ok {
-			service.thinking, _ = strconv.ParseBool(think)
-		} else if prompt, ok := strings.CutPrefix(t, "prompt: "); ok {
+		if think, ok := strings.CutPrefix(t, "think="); ok {
+			service.options.Reasoning, _ = strconv.Atoi(think)
+		} else if showThink, ok := strings.CutPrefix(t, "show-think="); ok {
+			service.options.ShowReasoning, _ = strconv.ParseBool(showThink)
+		} else if prompt, ok := strings.CutPrefix(t, "prompt="); ok {
 			service.prompt = prompt
 		}
 	}
@@ -65,14 +69,26 @@ func (c *Client) loadChannel(service *discChannelService) bool {
 	return true
 }
 
-func (s *discChannelService) resetMemory(messageHistory []responses.ResponseInputItemUnionParam) []responses.ResponseInputItemUnionParam {
+func (s *discChannelService) getOptions() completionOptions {
+	s.metaMux.RLock()
+	defer s.metaMux.RUnlock()
+	return s.options
+}
+
+func (s *discChannelService) getPrompt() string {
+	s.metaMux.RLock()
+	defer s.metaMux.RUnlock()
+	return s.prompt
+}
+
+func (s *discChannelService) resetMemory(messageHistory []openai.ChatCompletionMessageParamUnion) []openai.ChatCompletionMessageParamUnion {
 	messageHistory = append(messageHistory[:0], initPrompts...)
-	if len(s.prompt) > 0 {
-		messageHistory = append(messageHistory, responses.ResponseInputItemUnionParam{
-			OfMessage: &responses.EasyInputMessageParam{
-				Role: responses.EasyInputMessageRoleSystem,
-				Content: responses.EasyInputMessageContentUnionParam{
-					OfString: openai.String(s.prompt),
+	prompt := s.getPrompt()
+	if len(prompt) > 0 {
+		messageHistory = append(messageHistory, openai.ChatCompletionMessageParamUnion{
+			OfSystem: &openai.ChatCompletionSystemMessageParam{
+				Content: openai.ChatCompletionSystemMessageParamContentUnion{
+					OfString: openai.String(prompt),
 				},
 			},
 		})
@@ -139,7 +155,7 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 	ctx := service.ctx
 	messageCh := service.messageCh
 
-	messageHistory := make([]responses.ResponseInputItemUnionParam, 0, 4)
+	messageHistory := make([]openai.ChatCompletionMessageParamUnion, 0, 4)
 	messageHistory = service.resetMemory(messageHistory)
 
 	for {
@@ -153,12 +169,12 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 			}
 
 			userid := message.Author.Username
-			msgParts := make(responses.ResponseInputMessageContentListParam, 0, 2)
+			msgParts := make([]openai.ChatCompletionContentPartUnionParam, 0, 2)
 
-			msgParts = append(msgParts, responses.ResponseInputContentUnionParam{
-				OfInputText: &responses.ResponseInputTextParam{
+			msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
+				OfText: &openai.ChatCompletionContentPartTextParam{
 					Text: fmt.Sprintf(
-						"[name=%q;userid=%q;date=%s]: %s",
+						"[name:%q,userid:%q,date:%q]: %s",
 						message.Author.DisplayName(),
 						userid,
 						message.Timestamp.UTC().Format(time.DateTime),
@@ -170,16 +186,18 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 			var buf bytes.Buffer
 			for _, attachment := range message.Attachments {
 				if strings.HasPrefix(attachment.ContentType, "image/") {
-					msgParts = append(msgParts, responses.ResponseInputContentUnionParam{
-						OfInputImage: &responses.ResponseInputImageParam{
-							Detail: responses.ResponseInputImageDetailAuto,
-							ImageURL: openai.String(attachment.URL),
+					msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
+						OfImageURL: &openai.ChatCompletionContentPartImageParam{
+							ImageURL: openai.ChatCompletionContentPartImageImageURLParam{
+								URL: attachment.URL,
+								Detail: "auto",
+							},
 						},
 					})
 					continue
 				}
 				if strings.HasPrefix(attachment.ContentType, "audio/") {
-					// msgParts = append(msgParts, responses.ResponseInputContentUnionParam{
+					// msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
 					// 	OfInputFile: &responses.ResponseInputFileParam{
 					// 		FileURL: openai.String(attachment.URL),
 					// 	},
@@ -198,18 +216,17 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 					continue
 				}
 
-				msgParts = append(msgParts, responses.ResponseInputContentUnionParam{
-					OfInputText: &responses.ResponseInputTextParam{
+				msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
+					OfText: &openai.ChatCompletionContentPartTextParam{
 						Text: fmt.Sprintf("Filename %q:\n````````\n%s\n````````", attachment.Filename, buf.String()),
 					},
 				})
 			}
 
-			messageHistory = append(messageHistory, responses.ResponseInputItemUnionParam{
-				OfMessage: &responses.EasyInputMessageParam{
-					Role: responses.EasyInputMessageRoleUser,
-					Content: responses.EasyInputMessageContentUnionParam{
-						OfInputItemContentList: msgParts,
+			messageHistory = append(messageHistory, openai.ChatCompletionMessageParamUnion{
+				OfUser: &openai.ChatCompletionUserMessageParam{
+					Content: openai.ChatCompletionUserMessageParamContentUnion{
+						OfArrayOfContentParts: msgParts,
 					},
 				},
 			})
@@ -218,7 +235,7 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 			streamOutput := make(chan string, 64)
 
 			go func() {
-				output, err := c.StreamCompletion(cctx, messageHistory, streamOutput)
+				newMessageHistory, err := c.StreamCompletion(cctx, messageHistory, service.getOptions(), streamOutput)
 				if err != nil {
 					if !errors.Is(err, cctx.Err()) {
 						log.Println("error when streaming completion:", err)
@@ -226,14 +243,7 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 					}
 					return
 				}
-				messageHistory = append(messageHistory, responses.ResponseInputItemUnionParam{
-					OfMessage: &responses.EasyInputMessageParam{
-						Role: responses.EasyInputMessageRoleAssistant,
-						Content: responses.EasyInputMessageContentUnionParam{
-							OfString: openai.String(output),
-						},
-					},
-				})
+				messageHistory = newMessageHistory
 				close(streamOutput)
 			}()
 
