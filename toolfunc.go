@@ -27,7 +27,7 @@ type webSearchInput struct {
 }
 
 var webSearchTool = ToolFunction{
-	Description: "Search information on live global internet",
+	Description: "Search information on live global internet at users time",
 	ParametersSchema: map[string]any{
 		"$schema": "https://json-schema.org/draft/2020-12/schema",
 		"type":    "object",
