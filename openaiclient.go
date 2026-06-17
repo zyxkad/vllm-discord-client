@@ -133,6 +133,13 @@ func (c *Client) streamCompletionPart(
 		case "stop":
 			break
 		case "tool_calls":
+			if options.ShowReasoning {
+				select {
+				case output <- "\n\n**======== INVOKING TOOLS ========**\n\n":
+				case <-ctx.Done():
+					return completionError(ctx.Err())
+				}
+			}
 			return completionState{
 				reasoning: reasoningBuf.String(),
 				toolInvokes: toolInvokes,
@@ -148,11 +155,11 @@ func (c *Client) streamCompletionPart(
 			Reasoning string `json:"reasoning"`
 		}
 		if err := json.Unmarshal(([]byte) (delta.RawJSON()), &reasoningDeltaTmp); err == nil && len(reasoningDeltaTmp.Reasoning) > 0 {
+			if reasoningDone {
+				return completionError(errors.New("unexpected reasoning chunk after reasoning is done"))
+			}
 			reasoningBuf.WriteString(reasoningDeltaTmp.Reasoning)
 			if options.ShowReasoning {
-				if reasoningDone {
-					return completionError(errors.New("unexpected reasoning chunk after reasoning is done"))
-				}
 				select {
 				case output <- reasoningDeltaTmp.Reasoning:
 				case <-ctx.Done():
