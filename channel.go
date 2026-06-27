@@ -162,10 +162,9 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 		select {
 		case message := <-messageCh:
 			if message.Content == "reset" {
-				c.loadChannel(service)
-				messageHistory = service.resetMemory(messageHistory)
+				c.DeleteChannelService(service.id)
 				c.discSendReply(ctx, message, "**System**: Memory resetted!")
-				break
+				return
 			}
 
 			userid := message.Author.Username
@@ -189,7 +188,7 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 					msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
 						OfImageURL: &openai.ChatCompletionContentPartImageParam{
 							ImageURL: openai.ChatCompletionContentPartImageImageURLParam{
-								URL: attachment.URL,
+								URL:    attachment.URL,
 								Detail: "auto",
 							},
 						},

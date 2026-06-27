@@ -1,6 +1,6 @@
 module github.com/zyxkad/vllm-discord-client
 
-go 1.25.0
+go 1.26.4
 
 require (
 	github.com/bwmarrin/discordgo v0.29.0

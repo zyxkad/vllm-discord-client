@@ -25,6 +25,11 @@ var discChatChannelPrefix = "ai-chat"
 func (c *Client) initDiscordHandlers() {
 	c.discCli.Identify.Intents = discordgo.IntentGuilds | discordgo.IntentGuildMessages | discordgo.IntentGuildMessageTyping | discordgo.IntentMessageContent
 
+	allowedServers := make(map[string]struct{}, 0)
+	for _, id := range strings.Split(discServerID, ",") {
+		allowedServers[id] = struct{}{}
+	}
+
 	discMessageEvent := make(chan *discordgo.MessageCreate, 64)
 	go func() {
 		for {
@@ -40,8 +45,10 @@ func (c *Client) initDiscordHandlers() {
 		if event.Author.Bot {
 			return
 		}
-		if discServerID != "" && discServerID != event.GuildID {
-			return
+		if len(allowedServers) > 0 {
+			if _, ok := allowedServers[event.GuildID]; !ok {
+				return
+			}
 		}
 		if channel, err := c.discCli.State.Channel(event.ChannelID); err != nil || channel.IsThread() || !strings.HasPrefix(channel.Name, discChatChannelPrefix) {
 			return
@@ -151,12 +158,15 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 			if len(newMsg) > discMsgMaxLength {
 				newMsg, nextMsg = fixSplitedCodeBlock(splitMessage(newMsg))
 			}
+			if len(strings.Trim(newMsg, " \t\r\n")) == 0 {
+				continue
+			}
 			if replyingMsg, err = c.discCli.ChannelMessageSendComplex(
 				channelID,
 				&discordgo.MessageSend{
 					Content:         newMsg,
 					AllowedMentions: discNoMention,
-					Flags: discordgo.MessageFlagsSuppressEmbeds,
+					Flags:           discordgo.MessageFlagsSuppressEmbeds,
 				},
 				discordgo.WithContext(ctx),
 			); err != nil {

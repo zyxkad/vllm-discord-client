@@ -18,7 +18,7 @@ type completionOptions struct {
 
 type completionState struct {
 	err         error
-	reasoning string
+	reasoning   string
 	toolInvokes map[int64]*openai.ChatCompletionChunkChoiceDeltaToolCall
 	result      string
 }
@@ -45,7 +45,7 @@ func (c *Client) StreamCompletion(
 					OfFunction: &openai.ChatCompletionMessageFunctionToolCallParam{
 						ID: invoke.ID,
 						Function: openai.ChatCompletionMessageFunctionToolCallFunctionParam{
-							Name: invoke.Function.Name,
+							Name:      invoke.Function.Name,
 							Arguments: invoke.Function.Arguments,
 						},
 					},
@@ -97,9 +97,9 @@ func (c *Client) streamCompletionPart(
 	output chan<- string,
 ) completionState {
 	params := openai.ChatCompletionNewParams{
-		Messages: messages,
+		Messages:         messages,
 		FrequencyPenalty: openai.Float(0.2),
-		Tools: c.toolParam,
+		Tools:            c.toolParam,
 	}
 	switch options.Reasoning {
 	case 0:
@@ -120,10 +120,10 @@ func (c *Client) streamCompletionPart(
 	defer stream.Close()
 
 	var (
-		resultBuf strings.Builder
-		reasoningBuf strings.Builder
+		resultBuf     strings.Builder
+		reasoningBuf  strings.Builder
 		reasoningDone = false
-		toolInvokes = make(map[int64]*openai.ChatCompletionChunkChoiceDeltaToolCall)
+		toolInvokes   = make(map[int64]*openai.ChatCompletionChunkChoiceDeltaToolCall)
 	)
 
 	for stream.Next() {
@@ -141,7 +141,7 @@ func (c *Client) streamCompletionPart(
 				}
 			}
 			return completionState{
-				reasoning: reasoningBuf.String(),
+				reasoning:   reasoningBuf.String(),
 				toolInvokes: toolInvokes,
 			}
 		case "":
@@ -154,7 +154,7 @@ func (c *Client) streamCompletionPart(
 		var reasoningDeltaTmp struct {
 			Reasoning string `json:"reasoning"`
 		}
-		if err := json.Unmarshal(([]byte) (delta.RawJSON()), &reasoningDeltaTmp); err == nil && len(reasoningDeltaTmp.Reasoning) > 0 {
+		if err := json.Unmarshal(([]byte)(delta.RawJSON()), &reasoningDeltaTmp); err == nil && len(reasoningDeltaTmp.Reasoning) > 0 {
 			if reasoningDone {
 				return completionError(errors.New("unexpected reasoning chunk after reasoning is done"))
 			}
@@ -212,6 +212,6 @@ func (c *Client) streamCompletionPart(
 	}
 	return completionState{
 		reasoning: reasoningBuf.String(),
-		result: resultBuf.String(),
+		result:    resultBuf.String(),
 	}
 }
