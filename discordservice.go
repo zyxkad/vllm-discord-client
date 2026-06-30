@@ -197,7 +197,7 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 				}
 			}
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 		}
 	}
 }

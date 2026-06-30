@@ -137,7 +137,7 @@ func (c *Client) streamCompletionPart(
 				select {
 				case output <- "\n\n**======== INVOKING TOOLS ========**\n\n":
 				case <-ctx.Done():
-					return completionError(ctx.Err())
+					return completionError(context.Cause(ctx))
 				}
 			}
 			return completionState{
@@ -163,7 +163,7 @@ func (c *Client) streamCompletionPart(
 				select {
 				case output <- reasoningDeltaTmp.Reasoning:
 				case <-ctx.Done():
-					return completionError(ctx.Err())
+					return completionError(context.Cause(ctx))
 				}
 			}
 		}
@@ -191,7 +191,7 @@ func (c *Client) streamCompletionPart(
 					select {
 					case output <- "\n\n**======== THINKING DONE ========**\n\n":
 					case <-ctx.Done():
-						return completionError(ctx.Err())
+						return completionError(context.Cause(ctx))
 					}
 				}
 			}
@@ -199,7 +199,7 @@ func (c *Client) streamCompletionPart(
 			select {
 			case output <- content:
 			case <-ctx.Done():
-				return completionError(ctx.Err())
+				return completionError(context.Cause(ctx))
 			}
 		}
 	}

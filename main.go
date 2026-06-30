@@ -76,7 +76,7 @@ func main() {
 	log.Println("started!")
 
 	<-sgCtx.Done()
-	log.Println("error:", sgCtx.Err())
+	log.Println("error:", context.Cause(sgCtx))
 }
 
 type Client struct {

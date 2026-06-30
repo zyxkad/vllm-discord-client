@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -39,8 +38,6 @@ var webSearchTool = ToolFunction{
 		},
 	},
 	Callback: func(ctx context.Context, input string) (string, error) {
-		log.Println("debug: web_search invoke:", input)
-
 		var args webSearchInput
 		if err := json.Unmarshal(([]byte)(input), &args); err != nil {
 			return "", err

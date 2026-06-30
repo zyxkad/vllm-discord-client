@@ -117,7 +117,7 @@ func (c *Client) GetOrCreateChannelService(channelID string) *discChannelService
 	go func() {
 		defer service.cancel(nil)
 		defer func() {
-			if service.ctx.Err() == discManualStop {
+			if context.Cause(service.ctx) == discManualStop {
 				return
 			}
 			c.channelServicesLock.Lock()
@@ -236,7 +236,7 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 			go func() {
 				newMessageHistory, err := c.StreamCompletion(cctx, messageHistory, service.getOptions(), streamOutput)
 				if err != nil {
-					if !errors.Is(err, cctx.Err()) {
+					if !errors.Is(err, context.Cause(cctx)) {
 						log.Println("error when streaming completion:", err)
 						cancel(err)
 					}
@@ -246,9 +246,17 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 				close(streamOutput)
 			}()
 
-			cancel(c.discLiveReply(cctx, message, streamOutput))
+			err := c.discLiveReply(cctx, message, streamOutput)
+			if err != nil {
+				tmpCtx, tmpCancel := context.WithTimeout(context.WithoutCancel(cctx), 3 * time.Second)
+				go func() {
+					defer tmpCancel()
+					c.discSendReply(tmpCtx, message, "**System:** internal error")
+				} ()
+			}
+			cancel(err)
 
-			if err := ctx.Err(); err != nil {
+			if ctx.Err() != nil {
 				return
 			}
 		case <-ctx.Done():
