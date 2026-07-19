@@ -106,7 +106,7 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 		}
 		return err
 	}
-	replyingMsg.Content = ""
+	currentContent := ""
 
 	c.discCli.ChannelTyping(channelID, discordgo.WithContext(ctx))
 
@@ -131,12 +131,12 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 			err     error
 		)
 
-		replyingMsg.Content = replyingMsg.Content + allRes
-		if len(replyingMsg.Content) > discMsgMaxLength {
-			replyingMsg.Content, nextMsg = fixSplitedCodeBlock(splitMessage(replyingMsg.Content))
+		currentContent = currentContent + allRes
+		if len(currentContent) > discMsgMaxLength {
+			currentContent, nextMsg = fixSplitedCodeBlock(splitMessage(currentContent))
 		}
 
-		fixedMessage := fixMessage(replyingMsg.Content)
+		fixedMessage := fixMessage(currentContent)
 		if _, err = c.discCli.ChannelMessageEditComplex(
 			&discordgo.MessageEdit{
 				Channel:         channelID,
@@ -152,19 +152,18 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 			return err
 		}
 
-		var newMsg string
 		for len(nextMsg) > 0 {
-			newMsg, nextMsg = nextMsg, ""
-			if len(newMsg) > discMsgMaxLength {
-				newMsg, nextMsg = fixSplitedCodeBlock(splitMessage(newMsg))
+			currentContent, nextMsg = nextMsg, ""
+			if len(currentContent) > discMsgMaxLength {
+				currentContent, nextMsg = fixSplitedCodeBlock(splitMessage(currentContent))
 			}
-			if len(strings.Trim(newMsg, " \t\r\n")) == 0 {
+			if len(strings.Trim(currentContent, " \t\r\n")) == 0 {
 				continue
 			}
 			if replyingMsg, err = c.discCli.ChannelMessageSendComplex(
 				channelID,
 				&discordgo.MessageSend{
-					Content:         newMsg,
+					Content:         currentContent,
 					AllowedMentions: discNoMention,
 					Flags:           discordgo.MessageFlagsSuppressEmbeds,
 				},

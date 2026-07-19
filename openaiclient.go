@@ -349,8 +349,20 @@ func (c *VLLMClient) streamCompletionPart(
 			break
 		case "tool_calls":
 			if options.ShowReasoning {
+				var toolInvokeBlock strings.Builder
+				toolInvokeBlock.WriteString("\n\n**======== BEGIN TOOL INVOKES ========**\n")
+				toolInvokeBlock.WriteString("```json\n")
+				e := json.NewEncoder(&toolInvokeBlock)
+				e.SetIndent("", "  ")
+				e.SetEscapeHTML(false)
+				for _, toolCall := range toolInvokes {
+					e.Encode(toolCall)
+				}
+				toolInvokeBlock.WriteString("```\n")
+				toolInvokeBlock.WriteString("**======== AFTER TOOL INVOKES ========**\n\n")
+
 				select {
-				case output <- "\n\n**======== INVOKING TOOLS ========**\n\n":
+				case output <- toolInvokeBlock.String():
 				case <-ctx.Done():
 					return completionError(context.Cause(ctx))
 				}
