@@ -234,7 +234,7 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 			streamOutput := make(chan string, 64)
 
 			go func() {
-				newMessageHistory, err := c.StreamCompletion(cctx, messageHistory, service.getOptions(), streamOutput)
+				newMessageHistory, err := c.llm.StreamCompletion(cctx, messageHistory, service.getOptions(), streamOutput)
 				if err != nil {
 					if !errors.Is(err, context.Cause(cctx)) {
 						log.Println("error when streaming completion:", err)
@@ -248,11 +248,11 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 
 			err := c.discLiveReply(cctx, message, streamOutput)
 			if err != nil {
-				tmpCtx, tmpCancel := context.WithTimeout(context.WithoutCancel(cctx), 3 * time.Second)
+				tmpCtx, tmpCancel := context.WithTimeout(context.WithoutCancel(cctx), 3*time.Second)
 				go func() {
 					defer tmpCancel()
 					c.discSendReply(tmpCtx, message, "**System:** internal error")
-				} ()
+				}()
 			}
 			cancel(err)
 

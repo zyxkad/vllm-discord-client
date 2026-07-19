@@ -15,7 +15,7 @@ type ToolFunction struct {
 	Callback         func(ctx context.Context, input string) (string, error)
 }
 
-func (c *Client) initToolFunctions() {
+func (c *VLLMClient) initToolFunctions() {
 	c.tools["web_search"] = webSearchTool
 }
 

@@ -7,15 +7,14 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/shared"
 )
 
 var (
-	endpoint     = os.Getenv("OPENAI_ENDPOINT")
+	endPoint     = os.Getenv("OPENAI_ENDPOINT")
 	discBotToken = os.Getenv("DISC_BOT_TOKEN")
 	discServerID = os.Getenv("DISC_SERVER_ID")
 	customPrompt = os.Getenv("CUSTOM_PROMPT")
@@ -35,7 +34,7 @@ var initPrompt = `
 - Lines begin with "-# " are smaller text.
 - Emojis can be used.
 **TOOL SUGGESTIONS:**
-- Invoke web_search tool if the users ask anything you do not know, or uncertain of.
+- **ALWAYS** invoke web_search tool if the users ask anything you do not know, or uncertain of.
 - Must provide the URL of web search sources.
 
 ` + customPrompt
@@ -51,7 +50,7 @@ var initPrompts = []openai.ChatCompletionMessageParamUnion{
 }
 
 func main() {
-	sgCtx, _ := signal.NotifyContext(context.Background(), os.Interrupt, os.Kill)
+	sgCtx, _ := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 
 	log.Println("starting ...")
 
@@ -60,13 +59,13 @@ func main() {
 		log.Fatalln("cannot create discord bot: ", err)
 	}
 
-	client := NewClient(
-		sgCtx,
-		discordCli,
-		openai.NewClient(
-			option.WithBaseURL(endpoint),
-		),
-	)
+	llm, err := NewVLLMClient(sgCtx, endPoint)
+	if err != nil {
+		log.Fatalln("cannot init LLM client: ", err)
+	}
+	llm.initTools()
+
+	client := NewClient(sgCtx, discordCli, llm)
 
 	if err := client.Start(); err != nil {
 		log.Fatalln("cannot start client:", err)
@@ -81,47 +80,29 @@ func main() {
 
 type Client struct {
 	discCli *discordgo.Session
-	aiCli   openai.Client
+	llm     *VLLMClient
 
 	ctx       context.Context
 	ctxCancel context.CancelCauseFunc
 
 	channelServices     map[string]*discChannelService
 	channelServicesLock sync.RWMutex
-
-	tools     map[string]ToolFunction
-	toolParam []openai.ChatCompletionToolUnionParam
 }
 
-func NewClient(ctx context.Context, discCli *discordgo.Session, aiCli openai.Client) *Client {
+func NewClient(ctx context.Context, discCli *discordgo.Session, llm *VLLMClient) *Client {
 	ctx1, cancel := context.WithCancelCause(ctx)
 	cli := &Client{
 		discCli:         discCli,
-		aiCli:           aiCli,
+		llm:             llm,
 		ctx:             ctx1,
 		ctxCancel:       cancel,
 		channelServices: make(map[string]*discChannelService, 16),
-		tools:           make(map[string]ToolFunction),
 	}
 	cli.initDiscordHandlers()
 	return cli
 }
 
 func (c *Client) Start() error {
-	c.initToolFunctions()
-	c.toolParam = make([]openai.ChatCompletionToolUnionParam, 0, len(c.tools))
-	for name, fn := range c.tools {
-		c.toolParam = append(c.toolParam, openai.ChatCompletionToolUnionParam{
-			OfFunction: &openai.ChatCompletionFunctionToolParam{
-				Function: shared.FunctionDefinitionParam{
-					Name:        name,
-					Description: openai.String(fn.Description),
-					Parameters:  fn.ParametersSchema,
-				},
-			},
-		})
-	}
-
 	if err := c.discCli.Open(); err != nil {
 		return fmt.Errorf("discord cli: %w", err)
 	}
