@@ -160,10 +160,11 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 			if len(strings.Trim(currentContent, " \t\r\n")) == 0 {
 				continue
 			}
+			fixedMessage := fixMessage(currentContent)
 			if replyingMsg, err = c.discCli.ChannelMessageSendComplex(
 				channelID,
 				&discordgo.MessageSend{
-					Content:         currentContent,
+					Content:         fixedMessage,
 					AllowedMentions: discNoMention,
 					Flags:           discordgo.MessageFlagsSuppressEmbeds,
 				},

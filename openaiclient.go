@@ -17,6 +17,7 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/shared"
+	"github.com/zyxkad/vllm-discord-client/tools"
 )
 
 type VLLMClient struct {
@@ -27,7 +28,7 @@ type VLLMClient struct {
 	sleepMux   sync.RWMutex
 	workSignal chan bool
 
-	tools     map[string]ToolFunction
+	tools     map[string]*tools.ToolFunction
 	toolParam []openai.ChatCompletionToolUnionParam
 }
 
@@ -51,7 +52,6 @@ func NewVLLMClient(ctx context.Context, endPoint string) (*VLLMClient, error) {
 			option.WithBaseURL(endPointUrl.JoinPath("/v1").String()),
 		),
 		workSignal: make(chan bool, 8),
-		tools:      make(map[string]ToolFunction),
 	}
 	go func() {
 		var workCount atomic.Int32
@@ -108,7 +108,7 @@ func completionError(err error) completionState {
 }
 
 func (c *VLLMClient) initTools() {
-	c.initToolFunctions()
+	c.tools = tools.Tools()
 	c.toolParam = make([]openai.ChatCompletionToolUnionParam, 0, len(c.tools))
 	for name, fn := range c.tools {
 		c.toolParam = append(c.toolParam, openai.ChatCompletionToolUnionParam{
@@ -246,6 +246,45 @@ func (c *VLLMClient) StreamCompletion(
 		if err := c.TryWakeup(ctx); err != nil {
 			return nil, err
 		}
+	}
+
+	userid, _ := ctx.Value("userid").(string)
+
+	{
+		lastMessage := messages[len(messages)-1]
+		messages = messages[:len(messages)-1]
+
+		if userid != "" {
+			var userMetaHint strings.Builder
+			shouldAddMeta := false
+
+			userMetaHint.WriteString("userid: ")
+			userMetaHint.WriteString(userid)
+			userMeta := tools.GetUserMetaData(userid)
+
+			if userMeta.Region != "" {
+				shouldAddMeta = true
+				userMetaHint.WriteString("\nregion: ")
+				userMetaHint.WriteString(userMeta.Region)
+			}
+			if userMeta.Language != "" {
+				shouldAddMeta = true
+				userMetaHint.WriteString("\npreferred language: ")
+				userMetaHint.WriteString(userMeta.Language)
+			}
+
+			if shouldAddMeta {
+				messages = append(messages, openai.ChatCompletionMessageParamUnion{
+					OfUser: &openai.ChatCompletionUserMessageParam{
+						Content: openai.ChatCompletionUserMessageParamContentUnion{
+							OfString: openai.String(userMetaHint.String()),
+						},
+					},
+				})
+			}
+		}
+
+		messages = append(messages, lastMessage)
 	}
 
 	for {

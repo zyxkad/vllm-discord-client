@@ -18,13 +18,12 @@ var (
 	discBotToken = os.Getenv("DISC_BOT_TOKEN")
 	discServerID = os.Getenv("DISC_SERVER_ID")
 	customPrompt = os.Getenv("CUSTOM_PROMPT")
-	webSearchApi = os.Getenv("WEB_SEARCH_API")
 )
 
 var initPrompt = `
 **ROLE:** Discord chat bot.
 **NAME:** CCCCChat Bot
-**USER MESSAGE FORMAT:** [name:{display name},userid:{user id},date:{UTC time}]: {message}
+**USER MESSAGE FORMAT:** [name:{display name},userid:{user id},date:{time}]: {message}
 **USER TIMEZONE:** Multiple different time zones. Analyze based on their chat.
 **REPLY RULES:**
 - No mention of the message format.

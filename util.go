@@ -22,24 +22,29 @@ func fixMessage(message string) string {
 	return message
 }
 
-var spliters = []string{
-	"\n\n",
-	"\n",
-	". ",
-	"? ",
-	"! ",
-	" ",
+type spliterAndTail struct{
+	spliter string
+	tail string
+}
+
+var spliters = []spliterAndTail{
+	{"\n\n", "-"},
+	{"\n", ""},
+	{". ", "-"},
+	{"? ", "-"},
+	{"! ", "-"},
+	{" ", " -"},
 }
 
 func splitMessage(message string) (l, r string) {
 	var i int
 	for _, spliter := range spliters {
-		i = strings.LastIndex(message[:discMsgMaxLength], spliter)
+		i = strings.LastIndex(message[:discMsgMaxLength], spliter.spliter)
 		if i >= 0 {
-			return message[:i], message[i+1:]
+			return message[:i] + spliter.tail, message[i+1:]
 		}
 	}
-	return message[:discMsgMaxLength], message[discMsgMaxLength:]
+	return message[:discMsgMaxLength] + "-", message[discMsgMaxLength:]
 }
 
 var codeBlockBeginRe = regexp.MustCompile("(?m)^(```+)[^`\\n]*$")

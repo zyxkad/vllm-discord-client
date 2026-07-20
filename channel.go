@@ -163,7 +163,12 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 		case message := <-messageCh:
 			if message.Content == "reset" {
 				c.DeleteChannelService(service.id)
-				c.discSendReply(ctx, message, "**System**: Memory resetted!")
+				tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10 * time.Second)
+				_, err := c.discSendReply(tctx, message, "**System**: Memory resetted!")
+				cancel()
+				if err != nil {
+					log.Println("cannot send discord reply:", err)
+				}
 				return
 			}
 
@@ -176,7 +181,7 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 						"[name:%q,userid:%q,date:%q]: %s",
 						message.Author.DisplayName(),
 						userid,
-						message.Timestamp.UTC().Format(time.DateTime),
+						message.Timestamp.UTC().Format(time.DateTime) + " UTC",
 						message.ContentWithMentionsReplaced(),
 					),
 				},
@@ -232,6 +237,8 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 
 			cctx, cancel := context.WithCancelCause(ctx)
 			streamOutput := make(chan string, 64)
+
+			cctx = context.WithValue(cctx, "userid", userid)
 
 			go func() {
 				newMessageHistory, err := c.llm.StreamCompletion(cctx, messageHistory, service.getOptions(), streamOutput)
