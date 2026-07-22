@@ -72,6 +72,19 @@ func (c *Client) initDiscordHandlers() {
 }
 
 func (c *Client) serveUserMsg(message *discordgo.Message) {
+	if message.Content == "reset" {
+		if !c.DeleteChannelService(message.ChannelID) {
+			return
+		}
+		tctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		_, err := c.discSendReply(tctx, message, "**System**: Memory resetted!")
+		cancel()
+		if err != nil {
+			log.Println("cannot send discord reply:", err)
+		}
+		return
+	}
+
 	service := c.GetOrCreateChannelService(message.ChannelID)
 	select {
 	case service.messageCh <- message:

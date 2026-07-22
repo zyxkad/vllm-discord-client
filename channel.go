@@ -161,20 +161,9 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 	for {
 		select {
 		case message := <-messageCh:
-			if message.Content == "reset" {
-				c.DeleteChannelService(service.id)
-				tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-				_, err := c.discSendReply(tctx, message, "**System**: Memory resetted!")
-				cancel()
-				if err != nil {
-					log.Println("cannot send discord reply:", err)
-				}
-				return
-			}
-
 			userid := message.Author.Username
-			msgParts := make([]openai.ChatCompletionContentPartUnionParam, 0, 2)
 
+			msgParts := make([]openai.ChatCompletionContentPartUnionParam, 0, 2)
 			msgParts = append(msgParts, openai.ChatCompletionContentPartUnionParam{
 				OfText: &openai.ChatCompletionContentPartTextParam{
 					Text: fmt.Sprintf(
