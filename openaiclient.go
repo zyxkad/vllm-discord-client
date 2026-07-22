@@ -78,7 +78,6 @@ func NewVLLMClient(ctx context.Context, endPoint string) (*VLLMClient, error) {
 				if workCount.Load() > 0 {
 					return
 				}
-				sleepTimer = time.NewTimer(idleTimeout)
 				go func() {
 					c.TrySleep(ctx)
 					if workCount.Load() > 0 {
@@ -240,7 +239,7 @@ func (c *VLLMClient) StreamCompletion(
 ) ([]openai.ChatCompletionMessageParamUnion, error) {
 	c.workSignal <- false
 	defer func() {
-		c.workSignal <- false
+		c.workSignal <- true
 	}()
 	if c.IsSleeping(ctx) {
 		if err := c.TryWakeup(ctx); err != nil {

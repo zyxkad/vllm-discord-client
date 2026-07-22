@@ -163,7 +163,7 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 		case message := <-messageCh:
 			if message.Content == "reset" {
 				c.DeleteChannelService(service.id)
-				tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10 * time.Second)
+				tctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 				_, err := c.discSendReply(tctx, message, "**System**: Memory resetted!")
 				cancel()
 				if err != nil {
@@ -181,7 +181,7 @@ func (c *Client) runDiscChannelService(service *discChannelService) {
 						"[name:%q,userid:%q,date:%q]: %s",
 						message.Author.DisplayName(),
 						userid,
-						message.Timestamp.UTC().Format(time.DateTime) + " UTC",
+						message.Timestamp.UTC().Format(time.DateTime)+" UTC",
 						message.ContentWithMentionsReplaced(),
 					),
 				},

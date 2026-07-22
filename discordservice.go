@@ -11,7 +11,8 @@ import (
 )
 
 const (
-	discMsgMaxLength = 1950
+	discMsgMinLength = 800
+	discMsgMaxLength = 1900
 	maxTextFileSize  = 200 * 1024
 )
 
@@ -156,6 +157,7 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 			currentContent, nextMsg = nextMsg, ""
 			if len(currentContent) > discMsgMaxLength {
 				currentContent, nextMsg = fixSplitedCodeBlock(splitMessage(currentContent))
+				log.Printf("splited: left=%q righ=%q", currentContent, nextMsg)
 			}
 			if len(strings.Trim(currentContent, " \t\r\n")) == 0 {
 				continue
@@ -184,6 +186,9 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 		case res, ok := <-streamOutput:
 			if !ok {
 				return refreshResBuf()
+			}
+			if ctx.Err() != nil {
+				return context.Cause(ctx)
 			}
 
 			resBuf = append(resBuf, res)
