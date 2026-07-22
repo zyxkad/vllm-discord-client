@@ -58,9 +58,7 @@ func NewVLLMClient(ctx context.Context, endPoint string) (*VLLMClient, error) {
 
 		idleTimeout := 10 * time.Minute
 		sleepTimer := time.NewTimer(idleTimeout)
-		defer func() {
-			sleepTimer.Stop()
-		}()
+		defer sleepTimer.Stop()
 
 		for {
 			select {
@@ -69,7 +67,7 @@ func NewVLLMClient(ctx context.Context, endPoint string) (*VLLMClient, error) {
 			case isDone := <-c.workSignal:
 				if isDone {
 					if workCount.Add(-1) <= 0 {
-						sleepTimer = time.NewTimer(idleTimeout)
+						sleepTimer.Reset(idleTimeout)
 					}
 				} else if workCount.Add(1) == 1 {
 					sleepTimer.Stop()
@@ -388,7 +386,7 @@ func (c *VLLMClient) streamCompletionPart(
 		case "tool_calls":
 			if options.ShowReasoning {
 				var toolInvokeBlock strings.Builder
-				toolInvokeBlock.WriteString("\n\n**======== BEGIN TOOL INVOKES ========**\n")
+				toolInvokeBlock.WriteString("\x01**======== BEGIN TOOL INVOKES ========**\n")
 				toolInvokeBlock.WriteString("```json\n")
 				e := json.NewEncoder(&toolInvokeBlock)
 				e.SetIndent("", "  ")
@@ -454,7 +452,7 @@ func (c *VLLMClient) streamCompletionPart(
 				reasoningDone = true
 				if reasoningBuf.Len() > 0 && options.ShowReasoning {
 					select {
-					case output <- "\n\n**======== THINKING DONE ========**\n\n":
+					case output <- "\x01**======== THINKING DONE ========**\n\n":
 					case <-ctx.Done():
 						return completionError(context.Cause(ctx))
 					}

@@ -26,7 +26,7 @@ func init() {
 				Code string `json:"code"`
 			}
 			if err := json.Unmarshal(([]byte)(input), &args); err != nil {
-				return "", err
+				return "Tool invoke failed: parameter invalid: " + err.Error(), nil
 			}
 
 			vm := goja.New()
