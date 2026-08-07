@@ -1,16 +1,30 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
 
-var starSplitLineRe = regexp.MustCompile(`(?m)^\*\*+$`)
+var (
+	starSplitLineRe = regexp.MustCompile(`(?m)^\*\*+$`)
+	bracketLinkRe = regexp.MustCompile(`\[((https?://)([^\]]*[^\\\]]))\]\((https?://[^)]*[^\\)])\)`)
+)
 
 var messageFixers = []func(string) string{
 	func(message string) string {
 		return starSplitLineRe.ReplaceAllStringFunc(message, func(in string) string {
 			return strings.Repeat("-", len(in))
+		})
+	},
+	func(message string) string {
+		return bracketLinkRe.ReplaceAllStringFunc(message, func(bracketLink string) string {
+			matches := bracketLinkRe.FindStringSubmatch(bracketLink)
+			text, textNoSchema, link := matches[1], matches[3], matches[4]
+			if text == link {
+				return "<" + link + ">"
+			}
+			return fmt.Sprintf("[%s](%s)", textNoSchema, link)
 		})
 	},
 }

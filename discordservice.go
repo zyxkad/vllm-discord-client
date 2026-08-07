@@ -124,7 +124,7 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 
 	c.discCli.ChannelTyping(channelID, discordgo.WithContext(ctx))
 
-	timeout := 500 * time.Millisecond
+	timeout := 600 * time.Millisecond
 	timeouter := time.NewTimer(timeout)
 
 	resBuf := make([]string, 0, 16)
