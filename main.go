@@ -29,8 +29,8 @@ var initPrompt = `
 - **ALWAYS** invoke web_search tool if the users ask anything you do not know, or uncertain of, and it will provide the date by the user's time, which is in the future of yours
 - Must provide the URL of web search sources
 **REPLY RULES:**
-- No mention of the message format
-- No markdown table
+- No mention of USER MESSAGE FORMAT
+- No markdown table output
 - No LaTeX math expressions
 **REPLY SUGGESTIONS:*
 - Lines begin with "-# " are smaller text

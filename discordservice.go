@@ -21,7 +21,7 @@ var (
 	discManualStop = errors.New("manual stop triggered")
 )
 
-var discChatChannelPrefix = "ai-chat"
+const discChatChannelPrefix = "ai-chat"
 
 func (c *Client) initDiscordHandlers() {
 	c.discCli.Identify.Intents = discordgo.IntentGuilds | discordgo.IntentGuildMessages | discordgo.IntentGuildMessageTyping | discordgo.IntentMessageContent
@@ -51,7 +51,12 @@ func (c *Client) initDiscordHandlers() {
 				return
 			}
 		}
-		if channel, err := c.discCli.State.Channel(event.ChannelID); err != nil || channel.IsThread() || !strings.HasPrefix(channel.Name, discChatChannelPrefix) {
+
+		channel, err := c.discCli.State.Channel(event.ChannelID)
+		if err != nil {
+			return
+		}
+		if channel.IsThread() || !strings.HasPrefix(channel.Name, discChatChannelPrefix) {
 			return
 		}
 
@@ -124,8 +129,12 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 
 	c.discCli.ChannelTyping(channelID, discordgo.WithContext(ctx))
 
-	timeout := 600 * time.Millisecond
-	timeouter := time.NewTimer(timeout)
+	refreshInterval := 600 * time.Millisecond
+	refresher := time.NewTicker(refreshInterval)
+	defer refresher.Stop()
+	typingInterval := 3 * time.Second
+	typingRefresher := time.NewTicker(typingInterval)
+	defer typingRefresher.Stop()
 
 	resBuf := make([]string, 0, 16)
 
@@ -166,6 +175,8 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 				}
 				return err
 			}
+			c.discCli.ChannelTyping(channelID)
+			typingRefresher.Reset(typingInterval)
 		} else if _, err = c.discCli.ChannelMessageEditComplex(
 			&discordgo.MessageEdit{
 				Channel:         channelID,
@@ -204,11 +215,18 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 				}
 				return err
 			}
+			c.discCli.ChannelTyping(channelID)
+			typingRefresher.Reset(typingInterval)
 		}
 		return nil
 	}
 
 	for {
+		select {
+		case <-typingRefresher.C:
+			c.discCli.ChannelTyping(channelID)
+		default:
+		}
 		select {
 		case res, ok := <-streamOutput:
 			if !ok {
@@ -229,15 +247,14 @@ func (c *Client) discLiveReply(ctx context.Context, triggerMessage *discordgo.Me
 			}
 
 			resBuf = append(resBuf, res)
-		case <-timeouter.C:
-			timeouter.Reset(timeout)
-
-			c.discCli.ChannelTyping(channelID)
+		case <-refresher.C:
 			if len(resBuf) != 0 {
 				if err := refreshResBuf(); err != nil {
 					return err
 				}
 			}
+		case <-typingRefresher.C:
+			c.discCli.ChannelTyping(channelID)
 		case <-ctx.Done():
 			return context.Cause(ctx)
 		}

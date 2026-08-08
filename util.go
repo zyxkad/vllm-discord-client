@@ -8,7 +8,7 @@ import (
 
 var (
 	starSplitLineRe = regexp.MustCompile(`(?m)^\*\*+$`)
-	bracketLinkRe = regexp.MustCompile(`\[((https?://)([^\]]*[^\\\]]))\]\((https?://[^)]*[^\\)])\)`)
+	bracketLinkRe   = regexp.MustCompile(`\[((https?://)([^\]]*[^\\\]]))\]\((https?://[^)]*[^\\)])\)`)
 )
 
 var messageFixers = []func(string) string{
